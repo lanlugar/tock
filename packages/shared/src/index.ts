@@ -74,7 +74,7 @@ export const commandSchema = z.discriminatedUnion('type', [
       clientActionId: id,
     })
     .strict(),
-  ...(['startGame', 'rematch', 'endMatch', 'leaveRoom'] as const).map((type) =>
+  ...(['startGame', 'rematch', 'endMatch', 'leaveRoom', 'requestReset'] as const).map((type) =>
     z
       .object({
         type: z.literal(type),
@@ -83,6 +83,15 @@ export const commandSchema = z.discriminatedUnion('type', [
       })
       .strict(),
   ),
+  z
+    .object({
+      type: z.literal('respondReset'),
+      requestId: id,
+      approve: z.boolean(),
+      expectedVersion: z.number().int().nonnegative(),
+      clientActionId: id,
+    })
+    .strict(),
   z
     .object({
       type: z.literal('playCard'),
@@ -129,6 +138,21 @@ export interface RoomSnapshot {
   paused: boolean;
   endAllowedAt: number | null;
   game: PublicGame | null;
+  resetRequest: ResetRequest | null;
+  resetOutcome: ResetOutcome | null;
+}
+export interface ResetRequest {
+  id: string;
+  initiatorId: string;
+  expiresAt: number;
+  voterIds: string[];
+  approvedIds: string[];
+}
+export interface ResetOutcome {
+  requestId: string;
+  initiatorId: string;
+  status: 'completed' | 'rejected';
+  rejectedById?: string;
 }
 export interface PrivateHand {
   version: number;

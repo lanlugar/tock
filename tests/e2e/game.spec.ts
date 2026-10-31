@@ -307,3 +307,108 @@ test('built production entry serves the app and accepts same-origin rooms', asyn
     await exited;
   }
 });
+
+test('any player requests a reset, rejection identifies the voter, and a fresh request needs new approval', async ({
+  browser,
+}) => {
+  const [a, b] = await table(browser);
+  await b!.setViewportSize({ width: 375, height: 812 });
+  await a!.getByRole('button', { name: 'Reset table', exact: true }).click();
+  await expect(b!.getByRole('heading', { name: 'Reset requested' })).toBeVisible();
+  expect(await b!.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await b!.screenshot({ path: 'test-results/reset-mobile.png', fullPage: true });
+  await expect(b!.getByRole('timer')).toContainText('seconds remaining');
+  await expect(a!.getByRole('button', { name: 'Reset table', exact: true })).toBeDisabled();
+  await expect(a!.locator('.playing-card')).toHaveCount(5);
+  await expect(a!.locator('.playing-card').first()).toBeDisabled();
+  await b!.getByRole('button', { name: 'Reject reset', exact: true }).click();
+  await expect(a!.getByText(/Your reset request was rejected by Friend 1/)).toBeVisible();
+  await expect(a!.getByText('The race is on.')).toBeVisible();
+  await expect(a!.locator('.playing-card').first()).toBeEnabled();
+  await b!.getByRole('button', { name: 'Reset table', exact: true }).click();
+  await expect(a!.getByRole('heading', { name: 'Reset requested' })).toBeVisible();
+  await a!.getByRole('button', { name: 'Confirm reset', exact: true }).click();
+  for (const p of [a!, b!]) {
+    await expect(p.getByText('Your table is ready.')).toBeVisible();
+    await expect(p.getByRole('button', { name: 'I’m ready', exact: true })).toBeVisible();
+    await expect(p.locator('.playing-card')).toHaveCount(0);
+  }
+  for (const p of [a!, b!]) {
+    await p.getByRole('button', { name: 'I’m ready', exact: true }).click();
+    await expect(p.getByRole('button', { name: 'Ready ✓ · undo' })).toBeVisible();
+  }
+  await a!.getByRole('button', { name: 'Start the game' }).click();
+  await expect(b!.getByText('The race is on.')).toBeVisible();
+  await expect(b!.locator('.playing-card')).toHaveCount(5);
+});
+
+test('unanswered reset uses the real 30-second server timer and survives a page refresh', async ({
+  browser,
+}) => {
+  const [a, b] = await table(browser);
+  await a!.getByRole('button', { name: 'Reset table', exact: true }).click();
+  await expect(b!.getByRole('timer')).toContainText('30 seconds remaining');
+  const requestId = server.rooms.values().next().value!.resetRequest!.id;
+  await b!.reload();
+  await expect(b!.getByRole('heading', { name: 'Reset requested' })).toBeVisible();
+  expect(server.rooms.values().next().value!.resetRequest!.id).toBe(requestId);
+  await expect(a!.getByText('Your table is ready.')).toBeVisible({ timeout: 33_000 });
+  await expect(b!.getByText('Your table is ready.')).toBeVisible();
+  expect(server.rooms.values().next().value!.game).toBeNull();
+});
+
+test('copy invite copies the actual room code and confirms success', async ({ browser }) => {
+  const [a] = await table(browser);
+  await a!.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+  const code = await a!.locator('.room-code strong').innerText();
+  await a!.getByRole('button', { name: /Copy invite/ }).click();
+  await expect(a!.getByRole('button', { name: /Room code copied/ })).toBeVisible();
+  expect(await a!.evaluate(() => navigator.clipboard.readText())).toBe(code);
+});
+
+test('copy invite falls back when the modern clipboard API is unavailable or denied', async ({
+  browser,
+}) => {
+  const [a] = await table(browser);
+  await a!.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+  const code = await a!.locator('.room-code strong').innerText();
+  const clipboard = await a!.evaluateHandle(() => navigator.clipboard);
+  await a!.evaluate(() =>
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined }),
+  );
+  await a!.locator('.room-code button').click();
+  await expect(a!.getByRole('button', { name: /Room code copied/ })).toBeVisible();
+  expect(await clipboard.evaluate((api) => api.readText())).toBe(code);
+  await a!.evaluate(() =>
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: () => Promise.reject(new Error('Permission denied')) },
+    }),
+  );
+  await a!.locator('.room-code button').click();
+  await expect(a!.getByRole('button', { name: /Room code copied/ })).toBeVisible();
+  expect(await clipboard.evaluate((api) => api.readText())).toBe(code);
+});
+
+test('copy invite provides a selected code for manual copying if both clipboard methods fail', async ({
+  browser,
+}) => {
+  const [a] = await table(browser);
+  const code = await a!.locator('.room-code strong').innerText();
+  await a!.evaluate(() => {
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: () => Promise.reject(new Error('Permission denied')) },
+    });
+    document.execCommand = () => false;
+  });
+  await a!.getByRole('button', { name: /Copy invite/ }).click();
+  const field = a!.getByRole('textbox', { name: 'Room code to copy' });
+  await expect(field).toHaveValue(code);
+  await expect(field).toBeFocused();
+  expect(
+    await field.evaluate((input: HTMLInputElement) =>
+      input.value.slice(input.selectionStart!, input.selectionEnd!),
+    ),
+  ).toBe(code);
+});

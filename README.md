@@ -50,6 +50,8 @@ Docker alternative: configure a private .env, then run docker compose up --build
 
 ## Design and limits
 
+Every player can use **Reset table** to request a fresh game. Active players can confirm or reject; any rejection cancels and identifies the voter to the requester. Without a rejection, everyone confirming or the 30-second deadline clears the game and returns the same players to the lobby. Silence permits reset at the deadline. Room code, seats and rule settings stay; everyone must ready up again. **Copy invite** copies the room code and provides a manual-copy field if browser clipboard access fails.
+
 - Pure rules: packages/game-engine. Runtime schemas and filtered wire contracts: packages/shared. UI: apps/web. Authoritative room service: apps/server.
 - Deck and hands stay on the server; only the recipient receives their hand and legal actions. Public snapshots contain card counts and public discards.
 - Signed 24-hour reconnect credentials are stored in the browser. Reconnect within that window using the same browser profile. Requests use versions and action IDs; accepted duplicates cannot replay a move.

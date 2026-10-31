@@ -1,16 +1,24 @@
 # Verification — 2026-10-30
 
+## Follow-up: table reset and clipboard — 2026-10-31
+
+- Strict typecheck and lint passed.
+- 65 unit/integration checks passed (39 engine, 26 server), including reset electorate, approval/rejection, deadline boundary, reconnects, duplicate/concurrent votes, room mutation blocking and accepted-request replay across matches.
+- 14 browser scenarios passed, including the real 30-second server timer across refresh, named rejection/retry, starting a fresh match after reset, actual copied room-code contents, permission/API fallbacks and manual-copy selection.
+- Production frontend/server build and production-entry smoke test passed as part of the browser suite.
+- Render publication remains a separate deployment step; no live service was modified by these local changes.
+
 Executed in the local Windows workspace with Node 24 and the pinned pnpm 9.15.0 toolchain:
 
-| Check | Actual result |
-|---|---|
-| `corepack pnpm lint` | Passed, zero warnings |
-| `corepack pnpm typecheck` | Passed in strict mode |
-| `corepack pnpm test` | 53 passed: 39 engine checks and 14 server checks |
-| `corepack pnpm test:e2e` | 9 browser scenarios passed |
-| Production build | Passed for React/Vite frontend and bundled Node entry |
-| Production entry smoke | Passed: `/health`, built frontend, same-origin connection and room creation |
-| Visual inspection | Desktop and 375px screenshots inspected; no page-level horizontal overflow |
+| Check                     | Actual result                                                               |
+| ------------------------- | --------------------------------------------------------------------------- |
+| `corepack pnpm lint`      | Passed, zero warnings                                                       |
+| `corepack pnpm typecheck` | Passed in strict mode                                                       |
+| `corepack pnpm test`      | 53 passed: 39 engine checks and 14 server checks                            |
+| `corepack pnpm test:e2e`  | 9 browser scenarios passed                                                  |
+| Production build          | Passed for React/Vite frontend and bundled Node entry                       |
+| Production entry smoke    | Passed: `/health`, built frontend, same-origin connection and room creation |
+| Visual inspection         | Desktop and 375px screenshots inspected; no page-level horizontal overflow  |
 
 The engine suite plays complete individual and partnership matches from all marbles in break through a winner, checking card conservation and marble occupancy along the way. It also checks a separate 200-turn sequence and rule-specific boundaries. Browser scenarios cover isolated 2-, 3- and 4-player contexts, optional effects, keyboard moves, private discard selection, refresh/reconnect, late-match individual and team wins, and rematch.
 

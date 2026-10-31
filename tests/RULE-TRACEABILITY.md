@@ -1,5 +1,7 @@
 # Approved rules → executable checks
 
+Table lifecycle addition (2026-10-31): `apps/server/src/server.test.ts` covers reset notifications, active voter identity, unanimous approval, named rejection, retries, the 30-second boundary, duplicate/concurrent actions, lobby mutation blocking and reconnects. `tests/e2e/game.spec.ts` covers rejection/retry, a fresh match after approval, the real 30-second timer across refresh, actual clipboard contents, fallback copying and selected manual-copy UI. This workflow does not alter card or movement rules.
+
 All decisions below were approved in the implementation conversation. The board has **72**, not 76, shared track holes.
 
 | Decision | Engine coverage (`packages/game-engine/src/engine.test.ts`)                                                        | Online/browser coverage                                                                           |

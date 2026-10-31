@@ -23,6 +23,8 @@ import {
   type Reply,
   type RoomSnapshot,
   type ServerEvents,
+  type ResetRequest,
+  type ResetOutcome,
 } from '@marble/shared';
 
 interface SocketData {
@@ -41,6 +43,8 @@ export interface Room {
   pausedAt: number | null;
   emptyAt: number | null;
   receipts: Map<string, { fingerprint: string; reply: Reply }>;
+  resetRequest: ResetRequest | null;
+  resetOutcome: ResetOutcome | null;
 }
 export interface ServerConfig {
   secret?: string;
@@ -83,6 +87,8 @@ export function publicSnapshot(r: Room): RoomSnapshot {
     phase: r.phase,
     paused: r.phase === 'playing' && r.pausedAt !== null,
     endAllowedAt: null,
+    resetRequest: r.resetRequest ? structuredClone(r.resetRequest) : null,
+    resetOutcome: r.resetOutcome ? { ...r.resetOutcome } : null,
     game: g
       ? {
           marbles: structuredClone(g.marbles),
@@ -118,6 +124,8 @@ export function createGameServer(config: ServerConfig = {}) {
   const memberships = new Map<string, string>();
   const connections = new Map<string, Set<string>>();
   const limits = new Map<string, { since: number; count: number }>();
+  const resetTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  const resetWindowMs = 30_000;
   function allowed(key: string, max: number): boolean {
     let entry = limits.get(key);
     if (!entry || now() - entry.since >= 60_000) {
@@ -221,7 +229,9 @@ export function createGameServer(config: ServerConfig = {}) {
       seat: p.seat,
       cards: r.game?.hands[p.seat] ?? [],
       legal:
-        r.game && r.phase === 'playing' && r.pausedAt === null ? legalActions(r.game, p.seat) : [],
+        r.game && r.phase === 'playing' && r.pausedAt === null && !r.resetRequest
+          ? legalActions(r.game, p.seat)
+          : [],
     };
   }
   function publish(r: Room) {
@@ -241,6 +251,33 @@ export function createGameServer(config: ServerConfig = {}) {
     else r.emptyAt = null;
     if (!r.players.find((p) => p.id === r.hostId)?.connected)
       r.hostId = r.players.find((p) => p.connected)?.id ?? r.hostId;
+  }
+  function clearResetTimer(r: Room) {
+    const timer = resetTimers.get(r.code);
+    if (timer) clearTimeout(timer);
+    resetTimers.delete(r.code);
+  }
+  function completeReset(r: Room) {
+    const request = r.resetRequest;
+    if (!request) return;
+    clearResetTimer(r);
+    r.resetOutcome = {
+      requestId: request.id,
+      initiatorId: request.initiatorId,
+      status: 'completed',
+    };
+    r.resetRequest = null;
+    r.game = null;
+    r.phase = 'lobby';
+    r.pausedAt = null;
+    for (const player of r.players) player.ready = false;
+  }
+  function resolveExpiredReset(r: Room) {
+    if (r.resetRequest && now() >= r.resetRequest.expiresAt) {
+      completeReset(r);
+      r.version++;
+      publish(r);
+    }
   }
   function settle(g: Game): Game {
     return g.phase === 'dealing'
@@ -297,6 +334,8 @@ export function createGameServer(config: ServerConfig = {}) {
           pausedAt: null,
           emptyAt: null,
           receipts: new Map(),
+          resetRequest: null,
+          resetOutcome: null,
         };
         rooms.set(code, r);
       } else {
@@ -304,6 +343,9 @@ export function createGameServer(config: ServerConfig = {}) {
         if (!found || (command.joinToken && command.joinToken !== found.joinToken))
           return { ok: false, error: 'Room not found or invite expired.' };
         r = found;
+        resolveExpiredReset(r);
+        if (r.resetRequest)
+          return { ok: false, error: 'A table reset is pending. Wait for it to finish.' };
         if (r.phase !== 'lobby') return { ok: false, error: 'This match has already started.' };
         if (r.players.length >= 4) return { ok: false, error: 'Room is full.' };
       }
@@ -319,6 +361,7 @@ export function createGameServer(config: ServerConfig = {}) {
     const r = roomFor(id);
     const player = r?.players.find((p) => p.id === id);
     if (!r || !player) return { ok: false, error: 'Join a room first.' };
+    resolveExpiredReset(r);
     if (command.type === 'requestSnapshot') {
       publish(r);
       return { ok: true, version: r.version };
@@ -332,7 +375,13 @@ export function createGameServer(config: ServerConfig = {}) {
         ? old.reply
         : { ok: false, error: 'Action ID was already used for another request.' };
     }
-    if (command.expectedVersion !== r.version) {
+    // Votes refer to a specific request. Concurrent votes/presence updates may advance
+    // the version without invalidating another active player's response.
+    const currentVote =
+      command.type === 'respondReset' &&
+      command.requestId === r.resetRequest?.id &&
+      command.expectedVersion <= r.version;
+    if (command.expectedVersion !== r.version && !currentVote) {
       publish(r);
       return {
         ok: false,
@@ -341,6 +390,50 @@ export function createGameServer(config: ServerConfig = {}) {
       };
     }
     const reject = (error: string): Reply => ({ ok: false, error, version: r.version });
+    if (r.resetRequest && command.type !== 'respondReset')
+      return reject('A table reset is pending. Respond or wait for the countdown.');
+    if (command.type === 'requestReset') {
+      const voters = r.players.filter((player) => player.connected).map((player) => player.id);
+      const request: ResetRequest = {
+        id: randomBytes(16).toString('hex'),
+        initiatorId: id,
+        expiresAt: now() + resetWindowMs,
+        voterIds: voters,
+        approvedIds: [id],
+      };
+      r.resetRequest = request;
+      r.resetOutcome = null;
+      if (voters.length === 1) completeReset(r);
+      else {
+        const timer = setTimeout(() => {
+          if (rooms.get(r.code) === r && r.resetRequest?.id === request.id) resolveExpiredReset(r);
+        }, resetWindowMs);
+        timer.unref();
+        resetTimers.set(r.code, timer);
+      }
+    } else if (command.type === 'respondReset') {
+      const request = r.resetRequest;
+      if (!request || request.id !== command.requestId)
+        return reject('This reset request is no longer active.');
+      if (!request.voterIds.includes(id))
+        return reject('Only players active when the reset was requested may vote.');
+      if (request.approvedIds.includes(id))
+        return reject('You have already confirmed this reset request.');
+      if (!command.approve) {
+        r.resetOutcome = {
+          requestId: request.id,
+          initiatorId: request.initiatorId,
+          status: 'rejected',
+          rejectedById: id,
+        };
+        r.resetRequest = null;
+        clearResetTimer(r);
+      } else {
+        request.approvedIds.push(id);
+        if (request.voterIds.every((voter) => request.approvedIds.includes(voter)))
+          completeReset(r);
+      }
+    }
     if (command.type === 'leaveRoom') {
       if (r.phase === 'playing')
         return reject('End the match before leaving; closing the tab allows reconnect.');
@@ -443,11 +536,14 @@ export function createGameServer(config: ServerConfig = {}) {
     });
   });
   function sweep() {
-    for (const r of rooms.values())
+    for (const r of rooms.values()) {
+      resolveExpiredReset(r);
       if (r.emptyAt !== null && now() - r.emptyAt >= ttl) {
+        clearResetTimer(r);
         for (const p of r.players) memberships.delete(p.id);
         rooms.delete(r.code);
       }
+    }
     for (const [key, value] of limits) if (now() - value.since > 120_000) limits.delete(key);
   }
   const timer = setInterval(sweep, 30_000);
@@ -460,6 +556,8 @@ export function createGameServer(config: ServerConfig = {}) {
     publish,
     async close() {
       clearInterval(timer);
+      for (const timer of resetTimers.values()) clearTimeout(timer);
+      resetTimers.clear();
       await new Promise<void>((resolveClose) => io.close(() => resolveClose()));
     },
   };

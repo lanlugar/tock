@@ -259,3 +259,221 @@ describe('secure setup', () => {
     expect(draw).toBe(2);
   });
 });
+
+describe('table reset consensus', () => {
+  async function request(p: Peer) {
+    await refresh(p);
+    expect((await send(p, { type: 'requestReset', ...meta(p) })).ok).toBe(true);
+    return p.room!.resetRequest!;
+  }
+  async function vote(p: Peer, approve: boolean, requestId: string) {
+    await refresh(p);
+    return send(p, { type: 'respondReset', requestId, approve, ...meta(p) });
+  }
+  it('blocks joins, readiness, rules changes and leaving a lobby while reset is pending', async () => {
+    const a = await peer(),
+      b = await peer(),
+      outsider = await peer();
+    await send(a, { type: 'createRoom', name: 'A', seat: 0 });
+    await send(b, { type: 'joinRoom', name: 'B', seat: 2, code: a.room!.code });
+    await request(a);
+    await refresh(b);
+    expect(
+      (await send(outsider, { type: 'joinRoom', name: 'C', seat: 1, code: a.room!.code })).ok,
+    ).toBe(false);
+    expect((await send(b, { type: 'setReady', ready: true, ...meta(b) })).ok).toBe(false);
+    expect(
+      (await send(a, { type: 'configureRoom', options: a.room!.options, ...meta(a) })).ok,
+    ).toBe(false);
+    expect((await send(b, { type: 'leaveRoom', ...meta(b) })).ok).toBe(false);
+    expect(service.rooms.values().next().value!.players).toHaveLength(2);
+  });
+  it('an accepted request receipt cannot reset a subsequent match when replayed', async () => {
+    const [a, b] = await table();
+    await refresh(a!);
+    const command: Command = { type: 'requestReset', ...meta(a!) };
+    const accepted = await send(a!, command);
+    const reset = a!.room!.resetRequest!;
+    await vote(b!, true, reset.id);
+    for (const player of [a!, b!]) {
+      await refresh(player);
+      await send(player, { type: 'setReady', ready: true, ...meta(player) });
+    }
+    await refresh(a!);
+    await send(a!, { type: 'startGame', ...meta(a!) });
+    const room = service.rooms.values().next().value!;
+    const game = JSON.stringify(room.game);
+    const version = room.version;
+    expect(await send(a!, command)).toEqual(accepted);
+    expect(room.resetRequest).toBeNull();
+    expect(room.phase).toBe('playing');
+    expect(JSON.stringify(room.game)).toBe(game);
+    expect(room.version).toBe(version);
+  });
+  it('lets any member initiate, notifies all active players, and freezes gameplay without clearing hands', async () => {
+    const [host, guest] = await table();
+    const room = service.rooms.values().next().value!;
+    const game = JSON.stringify(room.game);
+    const reset = await request(guest!);
+    await refresh(host!);
+    expect(reset.initiatorId).toBe(guest!.id);
+    expect([...reset.voterIds].sort()).toEqual([host!.id, guest!.id].sort());
+    expect(reset.approvedIds).toEqual([guest!.id]);
+    expect(reset.expiresAt).toBe(now + 30_000);
+    expect(host!.room!.resetRequest).toEqual(guest!.room!.resetRequest);
+    expect(host!.hand!.cards).toHaveLength(5);
+    expect(host!.hand!.legal).toEqual([]);
+    expect(
+      (await send(host!, { type: 'playCard', action: { kind: 'discardHand' }, ...meta(host!) })).ok,
+    ).toBe(false);
+    expect(JSON.stringify(room.game)).toBe(game);
+  });
+  it('resets on unanimous approval, retaining seats, code and options and clearing private hands', async () => {
+    const [a, b] = await table();
+    const room = service.rooms.values().next().value!;
+    const before = {
+      code: room.code,
+      players: room.players.map((p) => p.id),
+      options: { ...room.options },
+    };
+    const reset = await request(a!);
+    expect((await vote(b!, true, reset.id)).ok).toBe(true);
+    await refresh(a!);
+    expect(room.phase).toBe('lobby');
+    expect(room.game).toBeNull();
+    expect(room.resetRequest).toBeNull();
+    expect(room.code).toBe(before.code);
+    expect(room.options).toEqual(before.options);
+    expect(room.players.map((p) => p.id)).toEqual(before.players);
+    expect(room.players.every((p) => !p.ready)).toBe(true);
+    expect(a!.hand!.cards).toEqual([]);
+    expect(b!.hand!.cards).toEqual([]);
+    expect(a!.room!.resetOutcome?.status).toBe('completed');
+  });
+  it('a rejection cancels and names its voter to the initiator; retry requires a new request', async () => {
+    const [a, b] = await table();
+    const room = service.rooms.values().next().value!;
+    const game = JSON.stringify(room.game);
+    const reset = await request(a!);
+    expect((await vote(b!, false, reset.id)).ok).toBe(true);
+    await refresh(a!);
+    expect(a!.room!.resetOutcome).toEqual({
+      requestId: reset.id,
+      initiatorId: a!.id,
+      status: 'rejected',
+      rejectedById: b!.id,
+    });
+    expect(room.resetRequest).toBeNull();
+    expect(JSON.stringify(room.game)).toBe(game);
+    now += 31_000;
+    service.sweep();
+    expect(room.phase).toBe('playing');
+    const retry = await request(a!);
+    expect(retry.id).not.toBe(reset.id);
+    expect(retry.approvedIds).toEqual([a!.id]);
+    expect(room.resetOutcome).toBeNull();
+    expect((await vote(b!, true, reset.id)).ok).toBe(false);
+    expect(room.resetRequest?.id).toBe(retry.id);
+  });
+  it('resets only at the 30-second deadline when another player does not respond', async () => {
+    const [a, b] = await table();
+    await request(a!);
+    const room = service.rooms.values().next().value!;
+    now += 29_999;
+    service.sweep();
+    expect(room.game).not.toBeNull();
+    now++;
+    service.sweep();
+    expect(room.game).toBeNull();
+    expect(room.phase).toBe('lobby');
+    await refresh(b!);
+    expect(b!.hand!.cards).toEqual([]);
+    expect(b!.room!.resetOutcome?.status).toBe('completed');
+    const version = room.version;
+    service.sweep();
+    expect(room.version).toBe(version);
+  });
+  it('handles concurrent approvals from the same snapshot without stale-vote failures', async () => {
+    const [a, b, c] = await table(3);
+    const reset = await request(a!);
+    await refresh(b!);
+    await refresh(c!);
+    const commands: Command[] = [b!, c!].map((p) => ({
+      type: 'respondReset',
+      requestId: reset.id,
+      approve: true,
+      ...meta(p),
+    }));
+    const results = await Promise.all([send(b!, commands[0]!), send(c!, commands[1]!)]);
+    expect(results.every((r) => r.ok)).toBe(true);
+    expect(service.rooms.values().next().value!.phase).toBe('lobby');
+  });
+  it('keeps reset requests idempotent and prevents duplicate requests or duplicate player votes', async () => {
+    const [a, b, c] = await table(3);
+    await refresh(a!);
+    const command: Command = { type: 'requestReset', ...meta(a!) };
+    const first = await send(a!, command);
+    const reset = a!.room!.resetRequest!;
+    expect(await send(a!, command)).toEqual(first);
+    await refresh(c!);
+    expect((await send(c!, { type: 'requestReset', ...meta(c!) })).ok).toBe(false);
+    expect((await vote(b!, true, reset.id)).ok).toBe(true);
+    expect((await vote(b!, true, reset.id)).ok).toBe(false);
+    expect(service.rooms.values().next().value!.resetRequest!.approvedIds).toHaveLength(2);
+  });
+  it('preserves the vote across disconnect and reconnect without extending the deadline', async () => {
+    const [a, b] = await table();
+    const reset = await request(a!);
+    const token = b!.token;
+    b!.socket.disconnect();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    now += 10_000;
+    const back = await peer(token);
+    await refresh(back);
+    expect(back.room!.resetRequest?.expiresAt).toBe(reset.expiresAt);
+    expect((await vote(back, false, reset.id)).ok).toBe(true);
+    await refresh(a!);
+    expect(a!.room!.resetOutcome?.rejectedById).toBe(back.id);
+    expect(a!.room!.paused).toBe(false);
+  });
+  it('ignores rejection received after the deadline and does not restore the destroyed game', async () => {
+    const [a, b] = await table();
+    const reset = await request(a!);
+    now += 30_000;
+    expect((await vote(b!, false, reset.id)).ok).toBe(false);
+    const room = service.rooms.values().next().value!;
+    expect(room.game).toBeNull();
+    expect(room.resetOutcome?.status).toBe('completed');
+  });
+  it('does not require already disconnected players and excludes newcomers from voting', async () => {
+    const [a, b, c] = await table(3);
+    c!.socket.disconnect();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    const reset = await request(a!);
+    expect(reset.voterIds).not.toContain(c!.id);
+    const back = await peer(c!.token);
+    await refresh(back);
+    expect((await vote(back, false, reset.id)).ok).toBe(false);
+    expect((await vote(b!, true, reset.id)).ok).toBe(true);
+    await refresh(back);
+    expect(back.room!.phase).toBe('lobby');
+  });
+  it('handles a single remaining active player and cannot be initiated by outsiders', async () => {
+    const [a, b] = await table();
+    const outsider = await peer();
+    expect(
+      (
+        await send(outsider, {
+          type: 'requestReset',
+          expectedVersion: 0,
+          clientActionId: randomUUID(),
+        })
+      ).ok,
+    ).toBe(false);
+    b!.socket.disconnect();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    await request(a!);
+    expect(a!.room!.phase).toBe('lobby');
+    expect(a!.room!.game).toBeNull();
+  });
+});

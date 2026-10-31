@@ -19,6 +19,8 @@ import type {
   ServerEvents,
 } from '@marble/shared';
 import { Board } from './Board';
+import { copyRoomCode } from './copy-room-code';
+import { ResetNotice } from './ResetNotice';
 import './style.css';
 
 const socket: Socket<ServerEvents, ClientEvents> = io(
@@ -44,6 +46,7 @@ function App() {
   const [seat, setSeat] = useState<Seat>(0),
     [error, setError] = useState(''),
     [busy, setBusy] = useState(false);
+  const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'manual'>('idle');
   const [card, setCard] = useState(''),
     [marble, setMarble] = useState(''),
     [preview, setPreview] = useState<LegalAction>(),
@@ -65,6 +68,7 @@ function App() {
     });
     socket.on('roomSnapshot', (r) => {
       setRoom(r);
+      setTime(Date.now());
       setPreview(undefined);
       setCard('');
       setMarble('');
@@ -115,6 +119,14 @@ function App() {
       document.querySelector<HTMLButtonElement>('nav button')?.focus();
     };
   }, [rules]);
+  useEffect(() => {
+    setCopyStatus('idle');
+  }, [room?.code]);
+  useEffect(() => {
+    if (copyStatus !== 'copied') return;
+    const timeout = setTimeout(() => setCopyStatus('idle'), 4000);
+    return () => clearTimeout(timeout);
+  }, [copyStatus]);
   async function send(command: Command) {
     if (!connected) {
       setError('Reconnect before sending an action.');
@@ -142,7 +154,8 @@ function App() {
   });
   const me = room?.players.find((p) => p.id === playerId);
   const host = room?.hostId === playerId;
-  const activeLegal = room && !room.paused && hand.version === room.version ? hand.legal : [];
+  const activeLegal =
+    room && !room.paused && !room.resetRequest && hand.version === room.version ? hand.legal : [];
   const choices = activeLegal.filter((a) =>
     'cardId' in a.action ? a.action.cardId === card : true,
   );
@@ -343,21 +356,50 @@ function App() {
                 <strong>{room.code}</strong>
                 <button
                   className="quiet"
-                  onClick={() => {
-                    if (!navigator.clipboard) {
-                      setError('Copy the room code above to invite a friend.');
-                      return;
-                    }
-                    void navigator.clipboard
-                      .writeText(`${location.origin}/?room=${room.code}&invite=${room.joinToken}`)
-                      .catch(() => setError('Copy the room code above to invite a friend.'));
+                  onClick={async () => {
+                    setCopyStatus((await copyRoomCode(room.code)) ? 'copied' : 'manual');
                   }}
                 >
-                  Copy invite ↗
+                  {copyStatus === 'copied' ? 'Room code copied ✓' : 'Copy invite ↗'}
                 </button>
+                <span className="copy-status" role="status">
+                  {copyStatus === 'copied' ? 'Room code copied to clipboard.' : ''}
+                </span>
+                {copyStatus === 'manual' && (
+                  <label className="manual-copy">
+                    Copy this room code:
+                    <input
+                      aria-label="Room code to copy"
+                      value={room.code}
+                      readOnly
+                      autoFocus
+                      onFocus={(event) => event.currentTarget.select()}
+                      onClick={(event) => event.currentTarget.select()}
+                    />
+                    <span>Press Ctrl+C / ⌘C, or select and copy on your phone.</span>
+                  </label>
+                )}
               </div>
             </section>
-            {room.paused && (
+            <div className="reset-toolbar">
+              <span>Need a fresh game? All active players will be asked to confirm.</span>
+              <button
+                disabled={busy || !connected || !!room.resetRequest}
+                onClick={() => void send({ type: 'requestReset', ...meta() })}
+              >
+                Reset table
+              </button>
+            </div>
+            <ResetNotice
+              room={room}
+              playerId={playerId}
+              time={time}
+              disabled={busy || !connected}
+              respond={(requestId, approve) =>
+                void send({ type: 'respondReset', requestId, approve, ...meta() })
+              }
+            />
+            {room.paused && !room.resetRequest && (
               <div className="notice" role="status">
                 Waiting for{' '}
                 {room.players
@@ -461,7 +503,7 @@ function App() {
                         <input
                           type="checkbox"
                           checked={room.options[key]}
-                          disabled={!host || busy}
+                          disabled={!host || busy || !!room.resetRequest}
                           onChange={(e) =>
                             void send({
                               type: 'configureRoom',
@@ -477,7 +519,7 @@ function App() {
                     </p>
                     <button
                       className={me?.ready ? 'secondary full' : 'primary full'}
-                      disabled={busy || !connected}
+                      disabled={busy || !connected || !!room.resetRequest}
                       onClick={() => void send({ type: 'setReady', ready: !me?.ready, ...meta() })}
                     >
                       {me?.ready ? 'Ready ✓ · undo' : 'I’m ready'}
@@ -486,6 +528,7 @@ function App() {
                       <button
                         className="primary full"
                         disabled={
+                          !!room.resetRequest ||
                           busy ||
                           room.players.length < 2 ||
                           !room.players.every((p) => p.ready && p.connected) ||
@@ -498,7 +541,7 @@ function App() {
                     )}
                     <button
                       className="quiet full"
-                      disabled={busy}
+                      disabled={busy || !!room.resetRequest}
                       onClick={() => void send({ type: 'leaveRoom', ...meta() })}
                     >
                       Leave table
@@ -516,7 +559,7 @@ function App() {
                     {host && (
                       <button
                         className="primary full"
-                        disabled={busy}
+                        disabled={busy || !!room.resetRequest}
                         onClick={() => void send({ type: 'rematch', ...meta() })}
                       >
                         Back to lobby · rematch ↻
@@ -524,7 +567,7 @@ function App() {
                     )}
                     <button
                       className="quiet full"
-                      disabled={busy}
+                      disabled={busy || !!room.resetRequest}
                       onClick={() => void send({ type: 'leaveRoom', ...meta() })}
                     >
                       Leave table
@@ -534,13 +577,15 @@ function App() {
                   <section className="panel turn-panel">
                     <span className="eyebrow">{myTurn ? 'YOUR MOVE' : 'TAKE A BREATHER'}</span>
                     <h2 aria-live="polite">
-                      {room.paused
-                        ? 'Game paused'
-                        : room.game?.phase === 'discardChoice'
-                          ? `${room.players.find((p) => p.seat === room.game?.pendingDiscard)?.name} chooses a discard`
-                          : myTurn
-                            ? 'Make it a good one.'
-                            : `${turnPlayer?.name}’s turn`}
+                      {room.resetRequest
+                        ? 'Reset confirmation in progress'
+                        : room.paused
+                          ? 'Game paused'
+                          : room.game?.phase === 'discardChoice'
+                            ? `${room.players.find((p) => p.seat === room.game?.pendingDiscard)?.name} chooses a discard`
+                            : myTurn
+                              ? 'Make it a good one.'
+                              : `${turnPlayer?.name}’s turn`}
                     </h2>
                     <p className="muted">{room.game?.lastMove}</p>
                     <div className="game-facts">
@@ -583,7 +628,7 @@ function App() {
                       className={`playing-card seat-${c.suit} ${card === c.id ? 'chosen' : ''}`}
                       aria-label={`Select ${cardName(c)}`}
                       aria-pressed={card === c.id}
-                      disabled={busy || !connected || room.paused}
+                      disabled={busy || !connected || room.paused || !!room.resetRequest}
                       onClick={() => changeCard(c.id)}
                     >
                       <span>{cardName(c)}</span>
@@ -601,7 +646,7 @@ function App() {
                     </p>
                   )}
                 </div>
-                {myTurn && !room.paused && (
+                {myTurn && !room.paused && !room.resetRequest && (
                   <div className="action-area">
                     {splitChoices.length > 0 ? (
                       <>

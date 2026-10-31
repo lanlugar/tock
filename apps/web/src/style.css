@@ -973,3 +973,82 @@ footer {
     scroll-behavior: auto !important;
   }
 }
+
+.reset-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 0 0 20px;
+  font-size: 12px;
+  color: #596954;
+}
+.reset-toolbar button {
+  flex-shrink: 0;
+}
+.reset-notice {
+  padding: 22px;
+  margin-bottom: 22px;
+  border: 2px solid #b58b43;
+  border-radius: 12px;
+  background: #f6eed6;
+  color: #3b4d34;
+}
+.reset-notice:focus {
+  outline: 3px solid #c78d2a;
+  outline-offset: 3px;
+}
+.reset-notice h2 {
+  font-size: 27px;
+  margin-bottom: 10px;
+}
+.reset-notice p {
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+.reset-notice .small {
+  font-size: 11px;
+  margin-top: 12px;
+}
+.reset-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 16px;
+}
+.copy-status {
+  display: block;
+  font-size: 11px;
+  color: #335c40;
+}
+.manual-copy {
+  display: block;
+  max-width: 280px;
+  font-size: 12px;
+  text-align: left;
+  margin-top: 10px;
+}
+.manual-copy input {
+  margin: 6px 0;
+}
+.manual-copy span {
+  display: block;
+  font-size: 10px;
+  line-height: 1.5;
+}
+@media (max-width: 720px) {
+  .reset-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .reset-toolbar button {
+    align-self: flex-start;
+  }
+  .reset-notice {
+    padding: 16px;
+  }
+  .room-code {
+    max-width: 48%;
+  }
+}
