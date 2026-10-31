@@ -203,7 +203,7 @@ function App() {
         >
           <span className="brand-mark">✣</span>
           <span>
-            marble<span className="brand-light"> circuit</span>
+            Tock<span className="brand-light"> Online</span>
             <small>THE TABLE IS OPEN</small>
           </span>
         </a>
@@ -423,7 +423,7 @@ function App() {
               <section className="table-area">
                 <div className="table-topline">
                   <span>
-                    MARBLE CIRCUIT{' '}
+                    TOCK ONLINE{' '}
                     <small>
                       · {room.options.teams ? 'PARTNERSHIPS' : 'EVERY MARBLE FOR ITSELF'}
                     </small>

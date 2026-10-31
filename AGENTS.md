@@ -1,4 +1,4 @@
-# Codex project instructions — Marble Circuit
+# Codex project instructions — Tock Online
 
 ## Source of truth
 Read `docs/00-DECISIONS.md`, `docs/02-RULES.md`, `docs/03-BOARD.md`, `docs/04-ARCHITECTURE.md` before editing gameplay. Treat unresolved questions as blockers, not permission to invent rules. Maintain a rules traceability table in tests.

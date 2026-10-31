@@ -32,7 +32,7 @@ export function Board({
     <svg
       className="board"
       viewBox="0 0 800 800"
-      aria-label="72-space Marble Circuit board. Use the action controls below to play."
+      aria-label="72-space Tock Online board. Use the action controls below to play."
       role="img"
     >
       <defs>

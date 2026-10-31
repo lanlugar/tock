@@ -1,4 +1,4 @@
-# Marble Circuit rules — approved release
+# Tock Online rules — approved release
 
 Authority: [approved decision register](00-DECISIONS.md). All earlier OPEN statements are superseded by the user's decisions recorded there. Every decision maps to executable checks in [test traceability](../tests/RULE-TRACEABILITY.md).
 

@@ -1,4 +1,4 @@
-# Marble Circuit
+# Tock Online
 
 A local, server-authoritative Tock game for 2–4 friends: 72-space board, private cards, heaven, optional card effects, opposite-seat partnerships, reconnects and rematches. Original responsive SVG artwork; no accounts required.
 

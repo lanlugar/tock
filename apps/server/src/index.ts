@@ -20,7 +20,7 @@ const server = createGameServer({
   webRoot: resolve(workspaceRoot, process.env.WEB_ROOT ?? 'apps/web/dist'),
 });
 const port = Number(process.env.PORT ?? 3001);
-server.http.listen(port, '0.0.0.0', () => console.log(`Marble Circuit listening on port ${port}`));
+server.http.listen(port, '0.0.0.0', () => console.log(`Tock Online listening on port ${port}`));
 for (const signal of ['SIGINT', 'SIGTERM'] as const)
   process.on(signal, () => {
     void server.close().then(() => process.exit(0));
