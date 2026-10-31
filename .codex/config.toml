@@ -1,0 +1,5 @@
+# Example Codex MCP entries. Merge into your existing Codex config; verify with `codex mcp list`.
+# For reproducibility, pin reviewed versions instead of @latest before production use.
+[mcp_servers.playwright]
+command = "npx"
+args = ["-y", "@playwright/mcp@latest"]

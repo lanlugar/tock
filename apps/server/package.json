@@ -1,0 +1,14 @@
+{
+  "name": "@marble/server",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "node build.mjs"
+  },
+  "dependencies": {
+    "@marble/engine": "workspace:*",
+    "@marble/shared": "workspace:*",
+    "socket.io": "^4.8.1"
+  }
+}

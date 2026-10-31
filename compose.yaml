@@ -1,0 +1,10 @@
+services:
+  game:
+    build: .
+    ports:
+      - '3001:3001'
+    environment:
+      NODE_ENV: production
+      SESSION_SECRET: ${SESSION_SECRET:?Set a random SESSION_SECRET in your local .env}
+      CLIENT_ORIGIN: ${CLIENT_ORIGIN:-http://localhost:3001}
+    restart: unless-stopped

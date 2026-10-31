@@ -1,0 +1,10 @@
+{
+  "name": "@marble/shared",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "dependencies": {
+    "@marble/engine": "workspace:*",
+    "zod": "^3.25.76"
+  }
+}

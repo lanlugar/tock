@@ -1,0 +1,36 @@
+# Dependencies and local package-manager caches
+node_modules/
+.pnpm-store/
+.npm/
+
+# Compiled output and tool caches (all workspace packages)
+dist/
+coverage/
+.vite/
+.cache/
+*.tsbuildinfo
+
+# Browser test reports and artifacts
+playwright-report/
+test-results/
+blob-report/
+
+# Local environment and secrets; keep the safe template tracked
+.env
+.env.*
+!.env.example
+
+# Runtime logs and process files
+*.log
+*.pid
+*.pid.lock
+
+# Editor temporary files and OS metadata
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Keep pnpm-lock.yaml, source images, and shared editor/agent settings tracked.
